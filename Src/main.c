@@ -23,6 +23,8 @@
 #include "dma.h"
 #include "usart.h"
 #include "gpio.h"
+#include <stdio.h>
+#include <string.h>
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
@@ -38,7 +40,28 @@ void proccesDmaData(uint8_t sign);
 
 /* Space for your global variables. */
 
-	// type your global variables here:
+#define STRING_START_SIGN	'#'
+#define STRING_END_SIGN		'$'
+#define STRING_MAX_SIGNS	35U			//max. number of signs after "#" (including "$")
+#define BUFFER_INFO_PERIOD_MS	2000U		//0.5 Hz
+
+/* Result of the last valid string (small and capital letters) */
+letter_count_ letterCount = {0, 0};
+
+/* State of string reception (used only in proccesDmaData) */
+static uint8_t stringReceiving = 0;					//1 = "#" was received, waiting for "$"
+static uint8_t stringSignCount = 0;					//number of signs received after "#"
+static char stringBuffer[STRING_MAX_SIGNS];			//signs between "#" and "$"
+static letter_count_ stringLetters = {0, 0};		//letters counted in current string
+
+/* Last valid string - written in USART interrupt (callback), read in main loop */
+static char validString[STRING_MAX_SIGNS];
+static volatile uint8_t validStringReady = 0;
+
+/* Buffer for USART2 DMA transmission */
+static uint8_t txBuffer[128];
+
+static void USART2_SendString(const char *text);
 
 
 int main(void)
@@ -59,7 +82,15 @@ int main(void)
 
   /* Space for your local variables, callback registration ...*/
 
-  	  //type your code here:
+  uint32_t ms_counter = 0;								//ms since last buffer info message
+  char message[128];
+  char string_copy[STRING_MAX_SIGNS];
+  letter_count_ letters_copy;
+  uint16_t occupied;
+  uint32_t load_x100;									//load in % * 100 (2 decimal places)
+
+  /* register function processing received data as callback for USART2 */
+  USART2_RegisterCallback(proccesDmaData);
 
   while (1)
   {
@@ -75,7 +106,39 @@ int main(void)
 	   * Example message (what I wish to see in terminal) - Valid string: Platn15uborZnakov, lower-case: 13, upper-case: 2
 	   */
 
-  	  	  	  //type your code here:
+	  /* SysTick counts 1 ms - COUNTFLAG is set every 1 ms and cleared by reading (no interrupt needed) */
+	  if(LL_SYSTICK_IsActiveCounterFlag())
+	  {
+		  ms_counter++;
+	  }
+
+	  /* periodic buffer state information, 0.5 Hz */
+	  if(ms_counter >= BUFFER_INFO_PERIOD_MS)
+	  {
+		  ms_counter = 0;
+
+		  occupied = USART2_GetDmaRxOccupied();
+		  load_x100 = ((uint32_t)occupied * 10000U) / DMA_USART2_BUFFER_SIZE;
+
+		  sprintf(message, "Buffer capacity: %d bytes, occupied memory: %d bytes, load [in %%]: %u.%02u%%\r\n",
+				  DMA_USART2_BUFFER_SIZE, occupied, (unsigned int)(load_x100 / 100U), (unsigned int)(load_x100 % 100U));
+		  USART2_SendString(message);
+	  }
+
+	  /* new valid string was received */
+	  if(validStringReady)
+	  {
+		  /* copy data written in interrupt (interrupts disabled for a moment) */
+		  __disable_irq();
+		  strcpy(string_copy, validString);
+		  letters_copy = letterCount;
+		  validStringReady = 0;
+		  __enable_irq();
+
+		  sprintf(message, "Valid string: %s, lower-case: %d, upper-case: %d\r\n",
+				  string_copy, letters_copy.small_letter, letters_copy.capital_letter);
+		  USART2_SendString(message);
+	  }
   }
   /* USER CODE END 3 */
 }
@@ -117,11 +180,73 @@ void SystemClock_Config(void)
  */
 void proccesDmaData(uint8_t sign)
 {
-	/* Process received data */
+	/* start sign - begin new string (also restarts unfinished string) */
+	if(sign == STRING_START_SIGN)
+	{
+		stringReceiving = 1;
+		stringSignCount = 0;
+		stringLetters.small_letter = 0;
+		stringLetters.capital_letter = 0;
+		return;
+	}
 
-		// type your algorithm here:
+	/* no start sign yet - ignore received signs */
+	if(!stringReceiving)
+	{
+		return;
+	}
+
+	stringSignCount++;
+
+	/* end sign within 35 signs after "#" - valid string */
+	if(sign == STRING_END_SIGN)
+	{
+		stringBuffer[stringSignCount - 1] = '\0';
+
+		if(!validStringReady)		//previous result already sent
+		{
+			strcpy(validString, stringBuffer);
+			letterCount = stringLetters;
+			validStringReady = 1;
+		}
+		stringReceiving = 0;
+		return;
+	}
+
+	/* 35 signs after "#" without "$" - discard data, wait for new "#" */
+	if(stringSignCount >= STRING_MAX_SIGNS)
+	{
+		stringReceiving = 0;
+		return;
+	}
+
+	/* store sign and count letters */
+	stringBuffer[stringSignCount - 1] = (char)sign;
+
+	if(sign >= 'a' && sign <= 'z')
+	{
+		stringLetters.small_letter++;
+	}
+	else if(sign >= 'A' && sign <= 'Z')
+	{
+		stringLetters.capital_letter++;
+	}
 }
 
+
+/*
+ * Sends text via USART2 with DMA.
+ * Waits until previous DMA transmission is finished (channel 7 is disabled in its TC interrupt).
+ */
+static void USART2_SendString(const char *text)
+{
+	uint8_t length = (uint8_t)strlen(text);
+
+	while(LL_DMA_IsEnabledChannel(DMA1, LL_DMA_CHANNEL_7));
+
+	memcpy(txBuffer, text, length);
+	USART2_PutBuffer(txBuffer, length);
+}
 
 void Error_Handler(void)
 {
