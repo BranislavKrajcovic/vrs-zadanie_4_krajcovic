@@ -37,7 +37,11 @@ void USART2_RegisterCallback(void *callback)
 
 /* Space for global variables, if you need them */
 
-	// type global variables here
+/* Maximal number of bytes the transmitting side sends at once (assignment: max 20 characters) */
+#define USART2_MAX_RX_BURST		20U
+
+/* Position in bufferUSART2dma up to which the received data were already processed */
+static uint16_t dmaRxProcessedPos = 0;
 
 
 /* USART2 init function */
@@ -152,10 +156,60 @@ void USART2_PutBuffer(uint8_t *buffer, uint8_t length)
  */
 void USART2_CheckDmaReception(void)
 {
-	//type your implementation here
+	uint16_t pos;
+
+	/* how many bytes DMA has written to the buffer since its start (DMA counts down CNDTR) */
+	pos = DMA_USART2_BUFFER_SIZE - LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_6);
+
+	/* forward every newly received byte to the callback */
+	while(dmaRxProcessedPos < pos)
+	{
+		if(USART2_ProcessData != 0)
+		{
+			USART2_ProcessData(bufferUSART2dma[dmaRxProcessedPos]);
+		}
+		dmaRxProcessedPos++;
+	}
+
+	/*
+	 * Buffer is used in NORMAL mode - when it is full, DMA stops and next data would be lost.
+	 * If there is not enough free space for the next message (max USART2_MAX_RX_BURST bytes),
+	 * DMA is restarted from the beginning of the buffer.
+	 */
+	if((DMA_USART2_BUFFER_SIZE - pos) < USART2_MAX_RX_BURST)
+	{
+		LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_6);
+
+		/* a byte could arrive between reading "pos" and disabling the channel - process it too */
+		pos = DMA_USART2_BUFFER_SIZE - LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_6);
+		while(dmaRxProcessedPos < pos)
+		{
+			if(USART2_ProcessData != 0)
+			{
+				USART2_ProcessData(bufferUSART2dma[dmaRxProcessedPos]);
+			}
+			dmaRxProcessedPos++;
+		}
+
+		/* restart DMA - memory address stays the same, so writing starts again at bufferUSART2dma[0] */
+		LL_DMA_ClearFlag_GI6(DMA1);
+		LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_6, DMA_USART2_BUFFER_SIZE);
+		LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
+
+		dmaRxProcessedPos = 0;
+	}
 }
 
 
 
+
+/*
+ * Returns how many bytes of the DMA Rx buffer are currently occupied
+ * (written by DMA since the last restart of the buffer).
+ */
+uint16_t USART2_GetDmaRxOccupied(void)
+{
+	return (uint16_t)(DMA_USART2_BUFFER_SIZE - LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_6));
+}
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
