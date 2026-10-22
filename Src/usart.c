@@ -71,12 +71,42 @@ void MX_USART2_UART_Init(void)
   
   /* USART2_RX Init */
 
-  	  // type DMA USART Rx configuration here
+  /* DMA1 channel 6 - USART2 Rx: peripheral -> memory, NORMAL mode (not circular) */
+  LL_DMA_SetDataTransferDirection(DMA1, LL_DMA_CHANNEL_6, LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
+  LL_DMA_SetChannelPriorityLevel(DMA1, LL_DMA_CHANNEL_6, LL_DMA_PRIORITY_MEDIUM);
+  LL_DMA_SetMode(DMA1, LL_DMA_CHANNEL_6, LL_DMA_MODE_NORMAL);
+  LL_DMA_SetPeriphIncMode(DMA1, LL_DMA_CHANNEL_6, LL_DMA_PERIPH_NOINCREMENT);	//always USART2->RDR
+  LL_DMA_SetMemoryIncMode(DMA1, LL_DMA_CHANNEL_6, LL_DMA_MEMORY_INCREMENT);		//next byte -> next position in buffer
+  LL_DMA_SetPeriphSize(DMA1, LL_DMA_CHANNEL_6, LL_DMA_PDATAALIGN_BYTE);
+  LL_DMA_SetMemorySize(DMA1, LL_DMA_CHANNEL_6, LL_DMA_MDATAALIGN_BYTE);
+
+  LL_DMA_ConfigAddresses(DMA1, LL_DMA_CHANNEL_6,
+                         LL_USART_DMA_GetRegAddr(USART2, LL_USART_DMA_REG_DATA_RECEIVE),	//source - USART2 receive register
+                         (uint32_t)bufferUSART2dma,												//destination - Rx buffer
+                         LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
+  LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_6, DMA_USART2_BUFFER_SIZE);
+
+  LL_DMA_EnableIT_HT(DMA1, LL_DMA_CHANNEL_6);		//half transfer interrupt
+  LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_6);		//transfer complete interrupt
+
+  LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_6);
+  LL_USART_EnableDMAReq_RX(USART2);				//USART2 Rx requests DMA
 
 
   /* USART2_TX Init */
 
-	  // type DMA USART Tx configuration here
+  /* DMA1 channel 7 - USART2 Tx: memory -> peripheral, NORMAL mode */
+  LL_DMA_SetDataTransferDirection(DMA1, LL_DMA_CHANNEL_7, LL_DMA_DIRECTION_MEMORY_TO_PERIPH);
+  LL_DMA_SetChannelPriorityLevel(DMA1, LL_DMA_CHANNEL_7, LL_DMA_PRIORITY_MEDIUM);
+  LL_DMA_SetMode(DMA1, LL_DMA_CHANNEL_7, LL_DMA_MODE_NORMAL);
+  LL_DMA_SetPeriphIncMode(DMA1, LL_DMA_CHANNEL_7, LL_DMA_PERIPH_NOINCREMENT);	//always USART2->TDR
+  LL_DMA_SetMemoryIncMode(DMA1, LL_DMA_CHANNEL_7, LL_DMA_MEMORY_INCREMENT);
+  LL_DMA_SetPeriphSize(DMA1, LL_DMA_CHANNEL_7, LL_DMA_PDATAALIGN_BYTE);
+  LL_DMA_SetMemorySize(DMA1, LL_DMA_CHANNEL_7, LL_DMA_MDATAALIGN_BYTE);
+
+  /* destination - USART2 transmit register (memory address and length are set in USART2_PutBuffer) */
+  LL_DMA_SetPeriphAddress(DMA1, LL_DMA_CHANNEL_7, LL_USART_DMA_GetRegAddr(USART2, LL_USART_DMA_REG_DATA_TRANSMIT));
+  LL_USART_EnableDMAReq_TX(USART2);				//USART2 Tx requests DMA
 
 
   /* USART2 interrupt Init */
@@ -96,7 +126,8 @@ void MX_USART2_UART_Init(void)
 
   /* Enable USART2 peripheral and interrupts*/
 
-  	  //type your code here:
+  LL_USART_EnableIT_IDLE(USART2);					//IDLE interrupt - end of incoming data
+  LL_USART_Enable(USART2);
 }
 
 
